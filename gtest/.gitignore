@@ -1,0 +1,79 @@
+# Build directories
+build/
+cmake-build-*/
+out/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+install_manifest.txt
+
+# Google Test / FetchContent downloads
+_deps/
+
+# Compiled binaries and libraries
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+*.o
+*.obj
+
+# Test executables
+mmf_tests
+*_tests
+*_test
+
+# Test output files
+test_mmf_files/
+Testing/
+*.xml
+*.log
+
+# IDE specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS specific files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+
+# Core dumps
+core
+core.*
+
+# Valgrind output
+*.valgrind
+
+# Coverage files
+*.gcov
+*.gcda
+*.gcno
+*.info
+coverage/
+
+# Debug files
+*.dSYM/
+*.pdb
+
+# Package managers
+conan.lock
+vcpkg_installed/
+
+# Other common build artifacts
+*.cmake
+!CMakeLists.txt
