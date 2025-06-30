@@ -7,49 +7,50 @@
 #include <random>
 #include <cerrno>
 #include <cstring>
-#include "../Mmf.hpp" // Include your MMF header
-#include <chrono>       // For performance testing
+#include "../Mmf.hpp"
+#include <chrono>
 
-// Helper function to convert MMFError to string for better error messages
-std::string MMFErrorToString(MMFError error) {
+// Helper function to convert MMF::Error to string for better error messages
+std::string MMFErrorToString(MMF::Error error) {
   switch (error) {
-    case MMFError::None:
+    case MMF::Error::None:
       return "None";
-    case MMFError::FileOpenFailed:
+    case MMF::Error::FileOpenFailed:
       return "FileOpenFailed";
-    case MMFError::FileStatFailed:
+    case MMF::Error::FileStatFailed:
       return "FileStatFailed";
-    case MMFError::MapFailed:
+    case MMF::Error::MapFailed:
       return "MapFailed";
-    case MMFError::InvalidOffset:
+    case MMF::Error::InvalidOffset:
       return "InvalidOffset";
-    case MMFError::InvalidPosition:
+    case MMF::Error::InvalidPosition:
       return "InvalidPosition";
-    case MMFError::NotMapped:
+    case MMF::Error::NotMapped:
       return "NotMapped";
-    case MMFError::EndOfFile:
+    case MMF::Error::EndOfFile:
       return "EndOfFile";
+    case MMF::Error::WriteError:
+      return "WriteError";
     default:
       return "Unknown";
   }
 }
 
-// Helper function to get current errno information
 std::string GetErrnoInfo() {
-  int err = errno;
-  return std::string(" (errno: ") + std::to_string(err) + " - " +
-         std::strerror(err) + ")";
+  std::string msg = " (errno: ";
+  msg += std::to_string(errno) + ", " + strerror(errno) + ")";
+  return msg;
 }
 
 // Helper function to create detailed error message
 std::string CreateErrorMessage(const std::string& context,
-                               MMFError error,
-                               bool include_errno = false) {
+                             MMF::Error error,
+                             bool include_errno = false) {
   std::string msg = context + ", error: " + MMFErrorToString(error);
   if (include_errno &&
-      (error == MMFError::FileOpenFailed ||
-       error == MMFError::FileStatFailed ||
-       error == MMFError::MapFailed)) {
+      (error == MMF::Error::FileOpenFailed ||
+       error == MMF::Error::FileStatFailed ||
+       error == MMF::Error::MapFailed)) {
     msg += GetErrnoInfo();
   }
   return msg;
@@ -123,6 +124,9 @@ protected:
     std::string another_long_line(5000, 'B');
     long_file << another_long_line;
     long_file.close();
+
+    // New file for write tests
+    write_test_file_ = test_dir_ + "/write_test.txt";
   }
 
   std::string test_dir_;
@@ -134,6 +138,7 @@ protected:
   std::string binary_file_;
   std::string long_lines_file_;
   std::string non_existent_file_ = "non_existent_file.txt";
+  std::string write_test_file_;  // New member for write tests
 };
 
 // Constructor Tests
@@ -142,7 +147,7 @@ TEST_F(MMFTest, ConstructorFullFileValid) {
   EXPECT_TRUE(mmf.IsValid())
       << CreateErrorMessage("MMF should be valid", mmf.GetLastError(),
                              true);
-  EXPECT_EQ(mmf.GetLastError(), MMFError::None)
+  EXPECT_EQ(mmf.GetLastError(), MMF::Error::None)
       << CreateErrorMessage("Expected no error", mmf.GetLastError(),
                              true);
   EXPECT_EQ(mmf.GetFilename(), single_line_file_);
@@ -153,7 +158,7 @@ TEST_F(MMFTest, ConstructorFullFileNonExistent) {
   EXPECT_FALSE(mmf.IsValid())
       << CreateErrorMessage("MMF should be invalid for non-existent file",
                              mmf.GetLastError(), true);
-  EXPECT_EQ(mmf.GetLastError(), MMFError::FileOpenFailed)
+  EXPECT_EQ(mmf.GetLastError(), MMF::Error::FileOpenFailed)
       << CreateErrorMessage("Expected FileOpenFailed",
                              mmf.GetLastError(), true);
   EXPECT_EQ(mmf.GetFilename(), non_existent_file_);
@@ -164,7 +169,7 @@ TEST_F(MMFTest, ConstructorFullFileEmpty) {
   EXPECT_TRUE(mmf.IsValid())
       << CreateErrorMessage("MMF should be valid for empty file",
                              mmf.GetLastError(), true);
-  EXPECT_EQ(mmf.GetLastError(), MMFError::None)
+  EXPECT_EQ(mmf.GetLastError(), MMF::Error::None)
       << CreateErrorMessage("Expected no error", mmf.GetLastError(),
                              true);
   EXPECT_EQ(mmf.GetFileSize().value_or(0), 0);
@@ -175,7 +180,7 @@ TEST_F(MMFTest, ConstructorPartialFileValid) {
   EXPECT_TRUE(mmf.IsValid())
       << CreateErrorMessage("MMF should be valid for partial mapping",
                              mmf.GetLastError(), true);
-  EXPECT_EQ(mmf.GetLastError(), MMFError::None)
+  EXPECT_EQ(mmf.GetLastError(), MMF::Error::None)
       << CreateErrorMessage("Expected no error", mmf.GetLastError(),
                              true);
   EXPECT_EQ(mmf.GetMappedSize().value_or(0), 1024);
@@ -188,7 +193,7 @@ TEST_F(MMFTest, ConstructorPartialFileInvalidOffset) {
       << CreateErrorMessage(
              "MMF should be invalid for offset beyond file size",
              mmf.GetLastError(), true);
-  EXPECT_EQ(mmf.GetLastError(), MMFError::InvalidOffset)
+  EXPECT_EQ(mmf.GetLastError(), MMF::Error::InvalidOffset)
       << CreateErrorMessage("Expected InvalidOffset",
                              mmf.GetLastError(), true);
 }
@@ -198,7 +203,7 @@ TEST_F(MMFTest, ConstructorPartialFileNonExistent) {
   EXPECT_FALSE(mmf.IsValid())
       << CreateErrorMessage("MMF should be invalid for non-existent file",
                              mmf.GetLastError(), true);
-  EXPECT_EQ(mmf.GetLastError(), MMFError::FileOpenFailed)
+  EXPECT_EQ(mmf.GetLastError(), MMF::Error::FileOpenFailed)
       << CreateErrorMessage("Expected FileOpenFailed",
                              mmf.GetLastError(), true);
 }
@@ -263,7 +268,7 @@ TEST_F(MMFTest, ReadLineSingleLine) {
       << CreateErrorMessage("ReadLine should return a value",
                              mmf.GetLastError(), false);
   EXPECT_EQ(line.value(), "Hello World");
-  EXPECT_EQ(mmf.GetLastError(), MMFError::None)
+  EXPECT_EQ(mmf.GetLastError(), MMF::Error::None)
       << CreateErrorMessage("Expected no error after ReadLine",
                              mmf.GetLastError(), false);
 
@@ -272,7 +277,7 @@ TEST_F(MMFTest, ReadLineSingleLine) {
   EXPECT_FALSE(line2.has_value())
       << CreateErrorMessage("Second ReadLine should return nullopt",
                              mmf.GetLastError(), false);
-  EXPECT_EQ(mmf.GetLastError(), MMFError::EndOfFile)
+  EXPECT_EQ(mmf.GetLastError(), MMF::Error::EndOfFile)
       << CreateErrorMessage("Expected EndOfFile", mmf.GetLastError(),
                              false);
 }
@@ -292,7 +297,7 @@ TEST_F(MMFTest, ReadLineMultipleLines) {
   }
 
   EXPECT_EQ(actual, expected);
-  EXPECT_EQ(mmf.GetLastError(), MMFError::EndOfFile)
+  EXPECT_EQ(mmf.GetLastError(), MMF::Error::EndOfFile)
       << CreateErrorMessage("Expected EndOfFile after reading all lines",
                              mmf.GetLastError(), false);
 }
@@ -307,7 +312,7 @@ TEST_F(MMFTest, ReadLineEmptyFile) {
   EXPECT_FALSE(line.has_value())
       << CreateErrorMessage("ReadLine should return nullopt for empty file",
                              mmf.GetLastError(), false);
-  EXPECT_EQ(mmf.GetLastError(), MMFError::EndOfFile)
+  EXPECT_EQ(mmf.GetLastError(), MMF::Error::EndOfFile)
       << CreateErrorMessage("Expected EndOfFile for empty file",
                              mmf.GetLastError(), false);
 }
@@ -323,7 +328,7 @@ TEST_F(MMFTest, ReadLineInvalidObject) {
       << CreateErrorMessage(
              "ReadLine should return nullopt for invalid object",
              mmf.GetLastError(), false);
-  EXPECT_EQ(mmf.GetLastError(), MMFError::NotMapped)
+  EXPECT_EQ(mmf.GetLastError(), MMF::Error::NotMapped)
       << CreateErrorMessage("Expected NotMapped", mmf.GetLastError(),
                              false);
 }
@@ -378,7 +383,7 @@ TEST_F(MMFTest, ReadLineViewSingleLine) {
       << CreateErrorMessage("ReadLineView should return a value",
                              mmf.GetLastError(), false);
   EXPECT_EQ(line_view.value(), "Hello World");
-  EXPECT_EQ(mmf.GetLastError(), MMFError::None)
+  EXPECT_EQ(mmf.GetLastError(), MMF::Error::None)
       << CreateErrorMessage("Expected no error after ReadLineView",
                              mmf.GetLastError(), false);
 
@@ -387,7 +392,7 @@ TEST_F(MMFTest, ReadLineViewSingleLine) {
   EXPECT_FALSE(line_view2.has_value())
       << CreateErrorMessage("Second ReadLineView should return nullopt",
                              mmf.GetLastError(), false);
-  EXPECT_EQ(mmf.GetLastError(), MMFError::EndOfFile)
+  EXPECT_EQ(mmf.GetLastError(), MMF::Error::EndOfFile)
       << CreateErrorMessage("Expected EndOfFile", mmf.GetLastError(),
                              false);
 }
@@ -420,7 +425,7 @@ TEST_F(MMFTest, ReadLineViewInvalidObject) {
       << CreateErrorMessage(
              "ReadLineView should return nullopt for invalid object",
              mmf.GetLastError(), false);
-  EXPECT_EQ(mmf.GetLastError(), MMFError::NotMapped)
+  EXPECT_EQ(mmf.GetLastError(), MMF::Error::NotMapped)
       << CreateErrorMessage("Expected NotMapped", mmf.GetLastError(),
                              false);
 }
@@ -467,7 +472,7 @@ TEST_F(MMFTest, SetPositionValid) {
                              true);
 
   auto result = mmf.SetPosition(5);
-  EXPECT_EQ(result, MMFError::None)
+  EXPECT_EQ(result, MMF::Error::None)
       << "SetPosition should succeed, got: " << MMFErrorToString(result);
 
   auto pos = mmf.GetCurrentPosition();
@@ -486,10 +491,10 @@ TEST_F(MMFTest, SetPositionInvalidPosition) {
 
   auto mapped_size = mmf.GetMappedSize().value_or(0);
   auto result = mmf.SetPosition(mapped_size + 100);
-  EXPECT_EQ(result, MMFError::InvalidPosition)
+  EXPECT_EQ(result, MMF::Error::InvalidPosition)
       << "SetPosition should fail with InvalidPosition, got: "
       << MMFErrorToString(result);
-  EXPECT_EQ(mmf.GetLastError(), MMFError::InvalidPosition)
+  EXPECT_EQ(mmf.GetLastError(), MMF::Error::InvalidPosition)
       << CreateErrorMessage("GetLastError should return InvalidPosition",
                              mmf.GetLastError(), false);
 }
@@ -501,7 +506,7 @@ TEST_F(MMFTest, SetPositionInvalidObject) {
                              mmf.GetLastError(), true);
 
   auto result = mmf.SetPosition(0);
-  EXPECT_EQ(result, MMFError::NotMapped)
+  EXPECT_EQ(result, MMF::Error::NotMapped)
       << "SetPosition should fail with NotMapped, got: "
       << MMFErrorToString(result);
 }
@@ -514,7 +519,7 @@ TEST_F(MMFTest, ResetValid) {
 
   mmf.ReadLine(); // Move position
   auto result = mmf.Reset();
-  EXPECT_EQ(result, MMFError::None)
+  EXPECT_EQ(result, MMF::Error::None)
       << "Reset should succeed, got: " << MMFErrorToString(result);
 
   auto pos = mmf.GetCurrentPosition();
@@ -532,7 +537,7 @@ TEST_F(MMFTest, ResetInvalidObject) {
                              mmf.GetLastError(), true);
 
   auto result = mmf.Reset();
-  EXPECT_EQ(result, MMFError::NotMapped)
+  EXPECT_EQ(result, MMF::Error::NotMapped)
       << "Reset should fail with NotMapped, got: "
       << MMFErrorToString(result);
 }
@@ -759,7 +764,7 @@ TEST_F(MMFTest, MultipleReadResetCycles) {
     EXPECT_EQ(lines[3], "Line 4");
 
     auto result = mmf.Reset();
-    EXPECT_EQ(result, MMFError::None)
+    EXPECT_EQ(result, MMF::Error::None)
         << "Reset should succeed in cycle " << cycle
         << ", got: " << MMFErrorToString(result);
   }
@@ -779,7 +784,7 @@ TEST_F(MMFTest, RandomPositionAccess) {
   for (int i = 0; i < 100; ++i) {
     size_t pos = dis(gen);
     auto result = mmf.SetPosition(pos);
-    EXPECT_EQ(result, MMFError::None)
+    EXPECT_EQ(result, MMF::Error::None)
         << "SetPosition should succeed for position " << pos
         << ", got: " << MMFErrorToString(result);
 
@@ -829,4 +834,103 @@ TEST_F(MMFTest, LastByteOffset) {
                mmf_partial.GetLastError(), false);
     EXPECT_GE(mapped_size.value(), 1);
   }
+}
+
+// Write Tests
+TEST_F(MMFTest, WriteOnlyModeCreatesNewFile) {
+    MMF mmf(write_test_file_, MMF::OpenMode::WriteOnly);
+    ASSERT_TRUE(mmf.IsValid()) << CreateErrorMessage("Failed to create file in write mode", mmf.GetLastError(), true);
+
+    MMF::Error write_result = mmf.WriteLine("Test line 1");
+    ASSERT_EQ(write_result, MMF::Error::None) << "Failed to write first line";
+
+    write_result = mmf.WriteLine("Test line 2");
+    ASSERT_EQ(write_result, MMF::Error::None) << "Failed to write second line";
+}
+
+TEST_F(MMFTest, ReadWriteModeWorks) {
+    // First create and write to file
+    {
+        MMF mmf(write_test_file_, MMF::OpenMode::WriteOnly);
+        ASSERT_TRUE(mmf.IsValid());
+        ASSERT_EQ(mmf.WriteLine("Line 1"), MMF::Error::None);
+        ASSERT_EQ(mmf.WriteLine("Line 2"), MMF::Error::None);
+    }
+
+    // Then open in read-write mode
+    MMF mmf(write_test_file_, MMF::OpenMode::ReadWrite);
+    ASSERT_TRUE(mmf.IsValid());
+
+    // Read existing content
+    auto line1 = mmf.ReadLine();
+    ASSERT_TRUE(line1.has_value());
+    ASSERT_EQ(*line1, "Line 1");
+
+    // Append new content
+    ASSERT_EQ(mmf.WriteLine("Line 3"), MMF::Error::None);
+}
+
+TEST_F(MMFTest, WriteToReadOnlyFails) {
+    MMF mmf(multi_line_file_); // Default ReadOnly mode
+    ASSERT_TRUE(mmf.IsValid());
+
+    MMF::Error write_result = mmf.WriteLine("Should fail");
+    ASSERT_EQ(write_result, MMF::Error::WriteError);
+}
+
+TEST_F(MMFTest, AutomaticFileGrowth) {
+    MMF mmf(write_test_file_, MMF::OpenMode::WriteOnly);
+    ASSERT_TRUE(mmf.IsValid());
+
+    // Write data larger than initial mapping
+    std::string large_line(8192, 'A'); // 8KB line
+    ASSERT_EQ(mmf.WriteLine(large_line), MMF::Error::None);
+
+    // Verify file size grew
+    auto size = mmf.GetMappedSize();
+    ASSERT_TRUE(size.has_value());
+    ASSERT_GT(*size, 8192) << "File didn't grow as expected";
+}
+
+TEST_F(MMFTest, WriteModeInitialization) {
+    // Test different open modes
+    {
+        MMF read_mmf(multi_line_file_); // Default ReadOnly
+        ASSERT_TRUE(read_mmf.IsValid());
+        ASSERT_EQ(read_mmf.WriteLine("test"), MMF::Error::WriteError);
+    }
+
+    {
+        MMF write_mmf(write_test_file_, MMF::OpenMode::WriteOnly);
+        ASSERT_TRUE(write_mmf.IsValid());
+        ASSERT_EQ(write_mmf.WriteLine("test"), MMF::Error::None);
+    }
+
+    {
+        MMF readwrite_mmf(write_test_file_, MMF::OpenMode::ReadWrite);
+        ASSERT_TRUE(readwrite_mmf.IsValid());
+        auto line = readwrite_mmf.ReadLine();
+        ASSERT_TRUE(line.has_value());
+        ASSERT_EQ(*line, "test");
+        ASSERT_EQ(readwrite_mmf.WriteLine("new line"), MMF::Error::None);
+    }
+}
+
+TEST_F(MMFTest, WriteWithOffset) {
+    // Create initial content
+    {
+        MMF mmf(write_test_file_, MMF::OpenMode::WriteOnly);
+        ASSERT_TRUE(mmf.IsValid());
+        ASSERT_EQ(mmf.WriteLine("Line 1"), MMF::Error::None);
+        ASSERT_EQ(mmf.WriteLine("Line 2"), MMF::Error::None);
+    }
+
+    // Open with offset in ReadWrite mode
+    MMF mmf(write_test_file_, 7, 100, MMF::OpenMode::ReadWrite); // Skip "Line 1\n"
+    ASSERT_TRUE(mmf.IsValid());
+
+    auto line = mmf.ReadLine();
+    ASSERT_TRUE(line.has_value());
+    ASSERT_EQ(line.value(), "Line 2");
+    EXPECT_EQ(mmf.GetCurrentPosition().value(), 7 + line.value().size() + 1); // +1 for '\n'
 }

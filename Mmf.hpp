@@ -10,18 +10,26 @@
 #include <unistd.h>
 #include <cstring>
 
-enum class MMFError {
-    None,
-    FileOpenFailed,
-    FileStatFailed,
-    MapFailed,
-    InvalidOffset,
-    InvalidPosition,
-    NotMapped,
-    EndOfFile
-};
-
 class MMF {
+public:
+    enum class OpenMode {
+        ReadOnly,   // Default mode
+        WriteOnly,  // Write-only mode
+        ReadWrite   // Both read and write
+    };
+
+    enum class Error {
+        None,
+        FileOpenFailed,
+        FileStatFailed,
+        MapFailed,
+        InvalidOffset,
+        InvalidPosition,
+        NotMapped,
+        EndOfFile,
+        WriteError
+    };
+
 private:
     int fd_;
     void* mapped_ptr_;
@@ -30,7 +38,8 @@ private:
     size_t current_position_;
     std::string filename_;
     bool is_valid_;
-    MMFError last_error_;
+    Error last_error_;
+    OpenMode mode_;
 
     void Cleanup() {
         if (mapped_ptr_ != MAP_FAILED && mapped_ptr_ != nullptr) {
@@ -43,9 +52,33 @@ private:
         }
     }
 
+    int GetOpenFlags() const {
+        switch (mode_) {
+            case OpenMode::WriteOnly:
+                return O_WRONLY | O_CREAT;
+            case OpenMode::ReadWrite:
+                return O_RDWR | O_CREAT;
+            case OpenMode::ReadOnly:
+            default:
+                return O_RDONLY;
+        }
+    }
+
+    int GetProtFlags() const {
+        switch (mode_) {
+            case OpenMode::WriteOnly:
+                return PROT_WRITE;
+            case OpenMode::ReadWrite:
+                return PROT_READ | PROT_WRITE;
+            case OpenMode::ReadOnly:
+            default:
+                return PROT_READ;
+        }
+    }
+
 public:
     // Constructor that maps the entire file
-    explicit MMF(const std::string& filename) 
+    explicit MMF(const std::string& filename, OpenMode mode = OpenMode::ReadOnly)
         : fd_(-1)
         , mapped_ptr_(MAP_FAILED)
         , file_size_(0)
@@ -53,39 +86,48 @@ public:
         , current_position_(0)
         , filename_(filename)
         , is_valid_(false)
-        , last_error_(MMFError::None) {
-        
-        fd_ = open(filename.c_str(), O_RDONLY);
+        , last_error_(Error::None)
+        , mode_(mode) {
+
+        fd_ = open(filename.c_str(), GetOpenFlags(), 0644);
         if (fd_ == -1) {
-            last_error_ = MMFError::FileOpenFailed;
+            last_error_ = Error::FileOpenFailed;
             return;
         }
 
         struct stat file_stat;
         if (fstat(fd_, &file_stat) == -1) {
-            last_error_ = MMFError::FileStatFailed;
+            last_error_ = Error::FileStatFailed;
             Cleanup();
             return;
         }
         
         file_size_ = file_stat.st_size;
-        mapped_size_ = file_size_;
+        mapped_size_ = file_size_ > 0 ? file_size_ : 4096; // Use at least one page for new files
 
-        if (file_size_ > 0) {
-            mapped_ptr_ = mmap(nullptr, file_size_, PROT_READ, 
-                             MAP_PRIVATE, fd_, 0);
-            if (mapped_ptr_ == MAP_FAILED) {
-                last_error_ = MMFError::MapFailed;
+        if (mode_ != OpenMode::ReadOnly && file_size_ == 0) {
+            // For write modes, create initial file size
+            if (ftruncate(fd_, mapped_size_) == -1) {
+                last_error_ = Error::FileOpenFailed;
                 Cleanup();
                 return;
             }
+            file_size_ = mapped_size_;
+        }
+
+        mapped_ptr_ = mmap(nullptr, mapped_size_, GetProtFlags(),
+                         MAP_SHARED, fd_, 0);
+        if (mapped_ptr_ == MAP_FAILED) {
+            last_error_ = Error::MapFailed;
+            Cleanup();
+            return;
         }
 
         is_valid_ = true;
     }
 
     // Constructor that maps a portion of the file
-    MMF(const std::string& filename, size_t offset, size_t size) 
+    MMF(const std::string& filename, size_t offset, size_t size, OpenMode mode = OpenMode::ReadOnly)
         : fd_(-1)
         , mapped_ptr_(MAP_FAILED)
         , file_size_(0)
@@ -93,17 +135,18 @@ public:
         , current_position_(0)
         , filename_(filename)
         , is_valid_(false)
-        , last_error_(MMFError::None) {
-        
-        fd_ = open(filename.c_str(), O_RDONLY);
+        , last_error_(Error::None)
+        , mode_(mode) {
+
+        fd_ = open(filename.c_str(), GetOpenFlags(), 0644);
         if (fd_ == -1) {
-            last_error_ = MMFError::FileOpenFailed;
+            last_error_ = Error::FileOpenFailed;
             return;
         }
 
         struct stat file_stat;
         if (fstat(fd_, &file_stat) == -1) {
-            last_error_ = MMFError::FileStatFailed;
+            last_error_ = Error::FileStatFailed;
             Cleanup();
             return;
         }
@@ -111,14 +154,14 @@ public:
         file_size_ = file_stat.st_size;
 
         if (offset >= file_size_) {
-            last_error_ = MMFError::InvalidOffset;
+            last_error_ = Error::InvalidOffset;
             Cleanup();
             return;
         }
 
         long page_size = sysconf(_SC_PAGE_SIZE);
         if (page_size == -1) {
-            last_error_ = MMFError::MapFailed;
+            last_error_ = Error::MapFailed;
             Cleanup();
             return;
         }
@@ -141,13 +184,60 @@ public:
             mapped_ptr_ = mmap(nullptr, mapped_size_, PROT_READ, 
                              MAP_PRIVATE, fd_, page_aligned_offset);
             if (mapped_ptr_ == MAP_FAILED) {
-                last_error_ = MMFError::MapFailed;
+                last_error_ = Error::MapFailed;
                 Cleanup();
                 return;
             }
         }
 
         is_valid_ = true;
+    }
+
+    // Write a line to the memory-mapped file
+    Error WriteLine(const std::string& line) {
+        if (!is_valid_ || mapped_ptr_ == MAP_FAILED) {
+            return Error::NotMapped;
+        }
+
+        if (mode_ == OpenMode::ReadOnly) {
+            return Error::WriteError;
+        }
+
+        size_t write_size = line.size();
+        if (current_position_ + write_size + 1 > mapped_size_) {
+            // Need to extend the file
+            size_t new_size = mapped_size_ * 2;
+            while (current_position_ + write_size + 1 > new_size) {
+                new_size *= 2;
+            }
+
+            if (ftruncate(fd_, new_size) == -1) {
+                return Error::WriteError;
+            }
+
+            // Unmap and remap with new size
+            munmap(mapped_ptr_, mapped_size_);
+            mapped_size_ = new_size;
+            mapped_ptr_ = mmap(nullptr, mapped_size_, GetProtFlags(),
+                             MAP_SHARED, fd_, 0);
+
+            if (mapped_ptr_ == MAP_FAILED) {
+                is_valid_ = false;
+                return Error::MapFailed;
+            }
+        }
+
+        char* write_ptr = static_cast<char*>(mapped_ptr_) + current_position_;
+        std::memcpy(write_ptr, line.c_str(), write_size);
+        write_ptr[write_size] = '\n';
+        current_position_ += write_size + 1;
+
+        // Ensure changes are written to disk
+        if (msync(mapped_ptr_, mapped_size_, MS_SYNC) == -1) {
+            return Error::WriteError;
+        }
+
+        return Error::None;
     }
 
     ~MMF() { Cleanup(); }
@@ -161,15 +251,16 @@ public:
         , current_position_(other.current_position_)
         , filename_(std::move(other.filename_))
         , is_valid_(other.is_valid_)
-        , last_error_(other.last_error_) {
-        
+        , last_error_(other.last_error_)
+        , mode_(other.mode_) {
+
         other.fd_ = -1;
         other.mapped_ptr_ = MAP_FAILED;
         other.file_size_ = 0;
         other.mapped_size_ = 0;
         other.current_position_ = 0;
         other.is_valid_ = false;
-        other.last_error_ = MMFError::None;
+        other.last_error_ = Error::None;
     }
 
     // Move assignment
@@ -185,14 +276,15 @@ public:
             filename_ = std::move(other.filename_);
             is_valid_ = other.is_valid_;
             last_error_ = other.last_error_;
-            
+            mode_ = other.mode_;
+
             other.fd_ = -1;
             other.mapped_ptr_ = MAP_FAILED;
             other.file_size_ = 0;
             other.mapped_size_ = 0;
             other.current_position_ = 0;
             other.is_valid_ = false;
-            other.last_error_ = MMFError::None;
+            other.last_error_ = Error::None;
         }
         return *this;
     }
@@ -201,16 +293,16 @@ public:
     MMF& operator=(const MMF&) = delete;
 
     bool IsValid() const { return is_valid_; }
-    MMFError GetLastError() const { return last_error_; }
+    Error GetLastError() const { return last_error_; }
 
     std::optional<std::string> ReadLine() {
         if (!is_valid_ || mapped_ptr_ == nullptr) {
-            last_error_ = MMFError::NotMapped;
+            last_error_ = Error::NotMapped;
             return std::nullopt;
         }
 
         if (current_position_ >= mapped_size_) {
-            last_error_ = MMFError::EndOfFile;
+            last_error_ = Error::EndOfFile;
             return std::nullopt;
         }
 
@@ -226,18 +318,18 @@ public:
         current_position_ = (line_end < mapped_size_ && 
                            data[line_end] == '\n') ? line_end + 1 : line_end;
 
-        last_error_ = MMFError::None;
+        last_error_ = Error::None;
         return line;
     }
 
     std::optional<std::string_view> ReadLineView() {
         if (!is_valid_ || mapped_ptr_ == nullptr) {
-            last_error_ = MMFError::NotMapped;
+            last_error_ = Error::NotMapped;
             return std::nullopt;
         }
 
         if (current_position_ >= mapped_size_) {
-            last_error_ = MMFError::EndOfFile;
+            last_error_ = Error::EndOfFile;
             return std::nullopt;
         }
 
@@ -253,18 +345,18 @@ public:
         current_position_ = (line_end < mapped_size_ && 
                            data[line_end] == '\n') ? line_end + 1 : line_end;
 
-        last_error_ = MMFError::None;
+        last_error_ = Error::None;
         return line_view;
     }
 
-    MMFError Reset() {
+    Error Reset() {
         if (!is_valid_) {
-            last_error_ = MMFError::NotMapped;
+            last_error_ = Error::NotMapped;
             return last_error_;
         }
         current_position_ = 0;
-        last_error_ = MMFError::None;
-        return MMFError::None;
+        last_error_ = Error::None;
+        return Error::None;
     }
 
     std::optional<size_t> GetCurrentPosition() const {
@@ -272,18 +364,18 @@ public:
                          : std::nullopt;
     }
 
-    MMFError SetPosition(size_t position) {
+    Error SetPosition(size_t position) {
         if (!is_valid_) {
-            last_error_ = MMFError::NotMapped;
+            last_error_ = Error::NotMapped;
             return last_error_;
         }
         if (position > mapped_size_) {
-            last_error_ = MMFError::InvalidPosition;
+            last_error_ = Error::InvalidPosition;
             return last_error_;
         }
         current_position_ = position;
-        last_error_ = MMFError::None;
-        return MMFError::None;
+        last_error_ = Error::None;
+        return Error::None;
     }
 
     std::optional<size_t> GetMappedSize() const {
