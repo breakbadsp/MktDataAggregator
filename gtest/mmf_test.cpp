@@ -10,6 +10,7 @@
 #include "../Mmf.hpp"
 #include <chrono>
 
+using namespace sp;
 // Helper function to convert MMF::Error to string for better error messages
 std::string MMFErrorToString(MMF::Error error) {
   switch (error) {

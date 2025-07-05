@@ -29,6 +29,7 @@ set(PARENT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/..)
 # Create the test executable
 add_executable(mmf_tests
         mmf_test.cpp
+        ../Mmf.cpp
 )
 
 # Set include directories for the target
