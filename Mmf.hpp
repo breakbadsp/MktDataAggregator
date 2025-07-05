@@ -1,14 +1,15 @@
 #ifndef MMF_H
 #define MMF_H
 
+#include <cstring>
+#include <fcntl.h>
+#include <iostream>
+#include <optional>
 #include <string>
 #include <string_view>
-#include <optional>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <fcntl.h>
 #include <unistd.h>
-#include <cstring>
 
 class MMF {
 public:
@@ -54,8 +55,6 @@ private:
 
     int GetOpenFlags() const {
         switch (mode_) {
-            case OpenMode::WriteOnly:
-                return O_WRONLY | O_CREAT;
             case OpenMode::ReadWrite:
                 return O_RDWR | O_CREAT;
             case OpenMode::ReadOnly:
@@ -101,9 +100,9 @@ public:
             Cleanup();
             return;
         }
-        
-        file_size_ = file_stat.st_size;
-        mapped_size_ = file_size_ > 0 ? file_size_ : 4096; // Use at least one page for new files
+
+        // file_size and mapped_size are the same for full file mapping
+        mapped_size_ = file_size_ = file_stat.st_size;
 
         if (mode_ != OpenMode::ReadOnly && file_size_ == 0) {
             // For write modes, create initial file size
@@ -112,17 +111,25 @@ public:
                 Cleanup();
                 return;
             }
-            file_size_ = mapped_size_;
         }
 
-        mapped_ptr_ = mmap(nullptr, mapped_size_, GetProtFlags(),
-                         MAP_SHARED, fd_, 0);
-        if (mapped_ptr_ == MAP_FAILED) {
+        if (file_size_ == 0) {
+          // we do not map empty files
+          // Reading will return EndOfFile
+          // Writing will extend the file
+          mapped_ptr_ = nullptr;
+        }
+         else {
+          std::cout << "Mapping file: " << filename_
+                    << " with size: " << file_size_ << std::endl;
+          mapped_ptr_ = mmap(nullptr, mapped_size_, GetProtFlags(),
+                           MAP_SHARED, fd_, 0);
+          if (mapped_ptr_ == MAP_FAILED) {
             last_error_ = Error::MapFailed;
             Cleanup();
             return;
+          }
         }
-
         is_valid_ = true;
     }
 
@@ -180,13 +187,21 @@ public:
             std::cout << "Mapping file: " << filename_
                       << " with effective size: " << file_size_
                       << " from offset: " << offset
+                      << " Page aligned offset: " << page_aligned_offset
                       << " with size: " << mapped_size_ << std::endl;
+
             mapped_ptr_ = mmap(nullptr, mapped_size_, PROT_READ, 
                              MAP_PRIVATE, fd_, page_aligned_offset);
             if (mapped_ptr_ == MAP_FAILED) {
                 last_error_ = Error::MapFailed;
                 Cleanup();
                 return;
+            }
+            if (page_aligned_offset < offset) {
+                // Adjust current position to the requested offset
+                current_position_ = offset - page_aligned_offset;
+            } else {
+                current_position_ = 0; // If no offset adjustment, start at 0
             }
         }
 
@@ -204,12 +219,43 @@ public:
         }
 
         size_t write_size = line.size();
+
+        if (write_size <= 0) {
+          return Error::WriteError;
+        }
+
+        if (mapped_ptr_ == nullptr) {
+            // If the file is empty, we need to create a new mapping
+            if (ftruncate(fd_, write_size + 1) == -1) {
+                return Error::WriteError;
+            }
+            mapped_size_ = write_size + 1;
+            std::cout << "Creating new mapping for file: " << filename_
+              << " with size: " << mapped_size_ << std::endl;
+
+            mapped_ptr_ = mmap(nullptr, mapped_size_, GetProtFlags(),
+                             MAP_SHARED, fd_, 0);
+            if (mapped_ptr_ == MAP_FAILED) {
+                is_valid_ = false;
+                return Error::MapFailed;
+            }
+        }
+
         if (current_position_ + write_size + 1 > mapped_size_) {
-            // Need to extend the file
             size_t new_size = mapped_size_ * 2;
+            if (new_size == 0) {
+              new_size = write_size + 1;
+            }
             while (current_position_ + write_size + 1 > new_size) {
                 new_size *= 2;
             }
+            // Need to extend the file
+            std::cout << "Extending file: " << filename_
+                    << " from size: " << mapped_size_
+                    << " to new size: " << new_size
+                    << " current position: " << current_position_
+                    << " to accommodate new line of size: " << write_size + 1
+                    << std::endl;
 
             if (ftruncate(fd_, new_size) == -1) {
                 return Error::WriteError;

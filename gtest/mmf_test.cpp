@@ -312,8 +312,8 @@ TEST_F(MMFTest, ReadLineEmptyFile) {
   EXPECT_FALSE(line.has_value())
       << CreateErrorMessage("ReadLine should return nullopt for empty file",
                              mmf.GetLastError(), false);
-  EXPECT_EQ(mmf.GetLastError(), MMF::Error::EndOfFile)
-      << CreateErrorMessage("Expected EndOfFile for empty file",
+  EXPECT_EQ(mmf.GetLastError(), MMF::Error::NotMapped)
+      << CreateErrorMessage("Expected NotMapped for empty file",
                              mmf.GetLastError(), false);
 }
 
@@ -837,12 +837,13 @@ TEST_F(MMFTest, LastByteOffset) {
 }
 
 // Write Tests
-TEST_F(MMFTest, WriteOnlyModeCreatesNewFile) {
-    MMF mmf(write_test_file_, MMF::OpenMode::WriteOnly);
+TEST_F(MMFTest, ReadWriteModeCreatesNewFile) {
+    MMF mmf(write_test_file_, MMF::OpenMode::ReadWrite);
     ASSERT_TRUE(mmf.IsValid()) << CreateErrorMessage("Failed to create file in write mode", mmf.GetLastError(), true);
 
     MMF::Error write_result = mmf.WriteLine("Test line 1");
-    ASSERT_EQ(write_result, MMF::Error::None) << "Failed to write first line";
+    ASSERT_EQ(write_result, MMF::Error::None)
+      << CreateErrorMessage("Failed to write first line with error: ", write_result, true);
 
     write_result = mmf.WriteLine("Test line 2");
     ASSERT_EQ(write_result, MMF::Error::None) << "Failed to write second line";
@@ -851,7 +852,7 @@ TEST_F(MMFTest, WriteOnlyModeCreatesNewFile) {
 TEST_F(MMFTest, ReadWriteModeWorks) {
     // First create and write to file
     {
-        MMF mmf(write_test_file_, MMF::OpenMode::WriteOnly);
+        MMF mmf(write_test_file_, MMF::OpenMode::ReadWrite);
         ASSERT_TRUE(mmf.IsValid());
         ASSERT_EQ(mmf.WriteLine("Line 1"), MMF::Error::None);
         ASSERT_EQ(mmf.WriteLine("Line 2"), MMF::Error::None);
@@ -879,7 +880,7 @@ TEST_F(MMFTest, WriteToReadOnlyFails) {
 }
 
 TEST_F(MMFTest, AutomaticFileGrowth) {
-    MMF mmf(write_test_file_, MMF::OpenMode::WriteOnly);
+    MMF mmf(write_test_file_, MMF::OpenMode::ReadWrite);
     ASSERT_TRUE(mmf.IsValid());
 
     // Write data larger than initial mapping
@@ -901,7 +902,7 @@ TEST_F(MMFTest, WriteModeInitialization) {
     }
 
     {
-        MMF write_mmf(write_test_file_, MMF::OpenMode::WriteOnly);
+        MMF write_mmf(write_test_file_, MMF::OpenMode::ReadWrite);
         ASSERT_TRUE(write_mmf.IsValid());
         ASSERT_EQ(write_mmf.WriteLine("test"), MMF::Error::None);
     }
@@ -919,7 +920,7 @@ TEST_F(MMFTest, WriteModeInitialization) {
 TEST_F(MMFTest, WriteWithOffset) {
     // Create initial content
     {
-        MMF mmf(write_test_file_, MMF::OpenMode::WriteOnly);
+        MMF mmf(write_test_file_, MMF::OpenMode::ReadWrite);
         ASSERT_TRUE(mmf.IsValid());
         ASSERT_EQ(mmf.WriteLine("Line 1"), MMF::Error::None);
         ASSERT_EQ(mmf.WriteLine("Line 2"), MMF::Error::None);

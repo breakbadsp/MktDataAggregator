@@ -45,11 +45,19 @@ target_link_libraries(mmf_tests
         gmock_main
 )
 
+option(ENABLE_SANITIZERS "Enable AddressSanitizer and other sanitizers" OFF)
+
+if(ENABLE_SANITIZERS)
+    target_compile_options(mmf_tests PRIVATE -fsanitize=address)
+    target_link_options(mmf_tests PRIVATE -fsanitize=address)
+endif()
+
 # Add compiler flags
 target_compile_options(mmf_tests PRIVATE
         -Wall
         -Wextra
         -Wpedantic
+        -Werror
         -g
 )
 
@@ -70,19 +78,4 @@ add_custom_target(run_tests
         COMMAND ${CMAKE_CTEST_COMMAND} --verbose
         DEPENDS mmf_tests
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-)
-
-# Optionally, add a target to run tests with more detailed output
-add_custom_target(run_tests_verbose
-        COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure --verbose
-        DEPENDS mmf_tests
-        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-)
-
-# Add a target to run specific test patterns
-add_custom_target(run_specific_test
-        COMMAND ./mmf_tests --gtest_filter="*Constructor*"
-        DEPENDS mmf_tests
-        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-        COMMENT "Run constructor tests only"
 )
