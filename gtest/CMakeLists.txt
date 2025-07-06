@@ -46,11 +46,22 @@ target_link_libraries(mmf_tests
         gmock_main
 )
 
+add_executable(mpsc_queue_tests
+        mpsc_queue_test.cpp
+)
+
+target_link_libraries(mpsc_queue_tests
+        gtest
+        gtest_main
+        pthread
+)
+
 option(ENABLE_SANITIZERS "Enable AddressSanitizer and other sanitizers" OFF)
 
 if(ENABLE_SANITIZERS)
-    target_compile_options(mmf_tests PRIVATE -fsanitize=address)
-    target_link_options(mmf_tests PRIVATE -fsanitize=address)
+    message("Sanitizers are enabled")
+    target_compile_options(mmf_tests PRIVATE -fsanitize=address,leak,undefined)
+    target_link_options(mmf_tests PRIVATE -fsanitize=address,leak,undefined)
 endif()
 
 # Add compiler flags
