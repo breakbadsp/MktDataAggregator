@@ -30,14 +30,17 @@ namespace sp {
     size_t file_size_;
     size_t mapped_size_;
     size_t current_position_;
+    size_t offset_;
     std::string filename_;
-    bool is_valid_;
-    Error last_error_;
+    mutable bool is_valid_;
+    mutable Error last_error_;
     OpenMode mode_;
 
     void Cleanup();
     int GetOpenFlags() const;
     int GetProtFlags() const;
+    std::optional<std::pair<size_t, size_t>> GetNextLineBounds(bool p_extend_mapping);
+    std::pair<size_t, size_t> GetAlignedOffsetAndSize(size_t offset, size_t size) const;
 
   public:
     explicit MMF(const std::string& filename, OpenMode mode = OpenMode::ReadOnly);
@@ -59,8 +62,8 @@ namespace sp {
     std::optional<const void*> GetData() const { return (is_valid_ && mapped_ptr_ != nullptr) ? std::optional<const void*>(mapped_ptr_) : std::nullopt; }
     std::optional<size_t> GetMappedOffset() const { return is_valid_ ? std::optional<size_t>(0) : std::nullopt; }
 
-    std::optional<std::string> ReadLine();
-    std::optional<std::string_view> ReadLineView();
+    std::optional<std::string> ReadLine(bool p_extend_mapping = false);
+    std::optional<std::string_view> ReadLineView(bool p_extend_mapping = false);
     Error WriteLine(const std::string& line);
     Error Reset();
     Error SetPosition(size_t position);

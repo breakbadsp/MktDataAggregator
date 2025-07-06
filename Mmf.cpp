@@ -50,6 +50,7 @@ MMF::MMF(const std::string& filename, OpenMode mode)
     , file_size_(0)
     , mapped_size_(0)
     , current_position_(0)
+    , offset_(0)
     , filename_(filename)
     , is_valid_(false)
     , last_error_(Error::None)
@@ -157,6 +158,7 @@ MMF::MMF(const std::string& filename, size_t offset, size_t size, OpenMode mode)
         } else {
             current_position_ = 0;
         }
+        offset_ = page_aligned_offset;
     }
 
     is_valid_ = true;
@@ -211,60 +213,110 @@ MMF& MMF::operator=(MMF&& other) noexcept {
     return *this;
 }
 
-std::optional<std::string> MMF::ReadLine() {
-    if (!is_valid_ || mapped_ptr_ == nullptr) {
-        last_error_ = Error::NotMapped;
-        return std::nullopt;
-    }
+std::optional<std::string> MMF::ReadLine(bool p_extend_mapping) {
+  const auto& bounds  = GetNextLineBounds(p_extend_mapping);
+  if (!bounds)
+    return std::nullopt;
+  const auto line_start = bounds->first;
+  const auto line_end = bounds->second;
 
-    if (current_position_ >= mapped_size_) {
+  if (line_start >= line_end) {
+    last_error_ = Error::EndOfFile;
+    return std::nullopt;
+  }
 
-        last_error_ = Error::EndOfFile;
-        return std::nullopt;
-    }
+  const char* data = static_cast<const char*>(mapped_ptr_);
+  std::string line(data + line_start, line_end - line_start);
+  current_position_ = (line_end < mapped_size_ && data[line_end] == '\n') ? line_end + 1 : line_end;
 
-    const char* data = static_cast<const char*>(mapped_ptr_);
-    size_t line_start = current_position_;
-    size_t line_end = current_position_;
-
-    while (line_end < mapped_size_ && data[line_end] != '\n') {
-        line_end++;
-    }
-
-    std::string line(data + line_start, line_end - line_start);
-    current_position_ = (line_end < mapped_size_ &&
-                       data[line_end] == '\n') ? line_end + 1 : line_end;
-
-    last_error_ = Error::None;
-    return line;
+  last_error_ = Error::None;
+  return line;
 }
 
-std::optional<std::string_view> MMF::ReadLineView() {
-    if (!is_valid_ || mapped_ptr_ == nullptr) {
-        last_error_ = Error::NotMapped;
-        return std::nullopt;
-    }
 
-    if (current_position_ >= mapped_size_) {
-        last_error_ = Error::EndOfFile;
-        return std::nullopt;
-    }
+std::optional<std::string_view> MMF::ReadLineView(bool p_extend_mapping) {
+  const auto& bounds  = GetNextLineBounds(p_extend_mapping);
+  if (!bounds)
+    return std::nullopt;
+  const auto line_start = bounds->first;
+  const auto line_end = bounds->second;
 
-    const char* data = static_cast<const char*>(mapped_ptr_);
-    size_t line_start = current_position_;
-    size_t line_end = current_position_;
+  if (line_start >= line_end) {
+    last_error_ = Error::EndOfFile;
+    return std::nullopt;
+  }
 
-    while (line_end < mapped_size_ && data[line_end] != '\n') {
-        line_end++;
-    }
+  const char* data = static_cast<const char*>(mapped_ptr_);
+  std::string_view line(data + line_start, line_end - line_start);
+  current_position_ = (line_end < mapped_size_ && data[line_end] == '\n') ? line_end + 1 : line_end;
 
-    std::string_view line_view(data + line_start, line_end - line_start);
-    current_position_ = (line_end < mapped_size_ &&
-                       data[line_end] == '\n') ? line_end + 1 : line_end;
-
-    last_error_ = Error::None;
-    return line_view;
+  last_error_ = Error::None;
+  return line;
 }
+
+// In Mmf.cpp or Mmf.hpp (as appropriate)
+std::pair<size_t, size_t> MMF::GetAlignedOffsetAndSize(size_t offset, size_t size) const {
+  long page_size = sysconf(_SC_PAGE_SIZE);
+  size_t page_aligned_offset = (offset / page_size) * page_size;
+  size_t offset_delta = offset - page_aligned_offset;
+  size_t mapped_size = offset_delta + size;
+  return {page_aligned_offset, mapped_size};
+}
+
+std::optional<std::pair<size_t, size_t>> MMF::GetNextLineBounds(bool p_extend_mapping) {
+  if (!is_valid_ || mapped_ptr_ == nullptr) {
+    last_error_ = Error::NotMapped;
+    return std::nullopt;
+  }
+
+  // If we've reached the end of the current mapping, try to remap if possible
+  if (current_position_ >= mapped_size_) {
+    // Only for full file mapping, not partial mapping
+    if (p_extend_mapping && (file_size_ > offset_ + mapped_size_) ){
+      size_t next_offset = offset_ + mapped_size_;
+      size_t remaining = file_size_ - next_offset;
+      size_t map_size = std::min(mapped_size_, remaining);
+
+      // Unmap previous region
+      if (mapped_ptr_ != MAP_FAILED && mapped_ptr_ != nullptr) {
+        munmap(mapped_ptr_, mapped_size_);
+      }
+
+      const auto [new_offset, new_map_size] = GetAlignedOffsetAndSize(next_offset, map_size);
+      // Map next region
+
+      std::cout << "Creating new mapping for file:" << filename_ << ", current_position_:"
+        << current_position_ << ", new_map_size:" << mapped_size_ << ", total file size:"
+        << file_size_ << ", offset:" << new_offset << std::endl;
+
+      mapped_ptr_ = mmap(nullptr, new_map_size, GetProtFlags(), MAP_SHARED, fd_, new_offset);
+      if (mapped_ptr_ == MAP_FAILED) {
+        mapped_ptr_ = nullptr;
+        last_error_ = Error::MapFailed;
+        is_valid_ = false;
+        return std::nullopt;
+      }
+      offset_ = new_offset;
+      mapped_size_ = new_map_size;
+      current_position_ = 0;
+      // file_size_ remains unchanged
+    } else {
+      last_error_ = Error::EndOfFile;
+      return std::nullopt;
+    }
+  }
+
+  const char* data = static_cast<const char*>(mapped_ptr_);
+  size_t line_start = current_position_;
+  size_t line_end = current_position_;
+
+  while (line_end < mapped_size_ && data[line_end] != '\n') {
+    line_end++;
+  }
+
+  return std::make_pair(line_start, line_end);
+}
+
 
 MMF::Error MMF::WriteLine(const std::string& line) {
     if (!is_valid_ || mapped_ptr_ == MAP_FAILED) {

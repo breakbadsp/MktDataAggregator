@@ -1,14 +1,15 @@
-#include <gtest/gtest.h>
-#include <gmock/gmock.h>
-#include <fstream>
-#include <filesystem>
-#include <string>
-#include <vector>
-#include <random>
-#include <cerrno>
-#include <cstring>
 #include "../Mmf.hpp"
+#include <cerrno>
 #include <chrono>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+#include <random>
+#include <string>
+#include <unistd.h>
+#include <vector>
 
 using namespace sp;
 // Helper function to convert MMF::Error to string for better error messages
@@ -935,4 +936,43 @@ TEST_F(MMFTest, WriteWithOffset) {
     ASSERT_TRUE(line.has_value());
     ASSERT_EQ(line.value(), "Line 2");
     EXPECT_EQ(mmf.GetCurrentPosition().value(), 7 + line.value().size() + 1); // +1 for '\n'
+}
+
+// Test chunked remapping in ReadLine()
+TEST_F(MMFTest, ChunkedRemappingReadLine) {
+
+  const auto page_size = sysconf(_SC_PAGE_SIZE); // 4KB pages
+  int chunk_size = page_size * 10; // 40KB chunks
+  constexpr int total_line = 2000;
+  // Create a file with many lines, each line is short
+  std::string chunked_file = test_dir_ + "/chunked.txt";
+  {
+    std::ofstream ofs(chunked_file);
+    for (int i = 0; i < total_line; ++i) {
+      ofs << "Line " << i << "\n";
+    }
+  }
+
+  // Open the file with MMF in chunked mode
+  MMF mmf(chunked_file, 0, chunk_size);
+  ASSERT_TRUE(mmf.IsValid());
+
+  std::vector<std::string> lines;
+  while (auto line = mmf.ReadLine(true)) {
+    lines.push_back(line.value());
+    //TODO:: Add tests checks here to verify chunked remapping
+  }
+
+  // Should read all 200 lines
+  ASSERT_EQ(lines.size(), total_line )
+    << CreateErrorMessage(
+      "Failed to create file in write mode",
+      mmf.GetLastError(),
+      true);
+
+  ASSERT_LE(mmf.GetMappedSize().value_or(0), chunk_size);
+  for (int i = 0; i < total_line; ++i) {
+    ASSERT_EQ(lines[i], "Line " + std::to_string(i));
+  }
+  ASSERT_EQ(mmf.GetLastError(), MMF::Error::EndOfFile);
 }
