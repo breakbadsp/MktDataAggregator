@@ -976,3 +976,113 @@ TEST_F(MMFTest, ChunkedRemappingReadLine) {
   }
   ASSERT_EQ(mmf.GetLastError(), MMF::Error::EndOfFile);
 }
+
+// Test chunked remapping with lines split across chunk boundaries
+TEST_F(MMFTest, ChunkedRemappingSplitLine) {
+    const auto page_size = sysconf(_SC_PAGE_SIZE);
+    int chunk_size = page_size * 2;
+    std::string file = test_dir_ + "/split_line.txt";
+    {
+        std::ofstream ofs(file);
+        ofs << std::string(chunk_size - 1, 'A'); // Fill almost one chunk
+        ofs << "\nB\n"; // Line break at chunk boundary, then another line
+    }
+    MMF mmf(file, 0, chunk_size);
+    ASSERT_TRUE(mmf.IsValid());
+
+    auto line1 = mmf.ReadLine(true);
+    ASSERT_TRUE(line1.has_value());
+    ASSERT_EQ(line1->size(), chunk_size - 1);
+
+    auto line2 = mmf.ReadLine(true);
+    ASSERT_TRUE(line2.has_value());
+    ASSERT_EQ(*line2, "B");
+
+    auto line3 = mmf.ReadLine(true);
+    ASSERT_FALSE(line3.has_value());
+    ASSERT_EQ(mmf.GetLastError(), MMF::Error::EndOfFile);
+}
+
+// Test chunked remapping with ReadLineView
+TEST_F(MMFTest, ChunkedRemappingReadLineView) {
+    const auto page_size = sysconf(_SC_PAGE_SIZE);
+    int chunk_size = page_size * 3;
+    constexpr int total_lines = 100;
+    std::string file = test_dir_ + "/chunked_view.txt";
+    {
+        std::ofstream ofs(file);
+        for (int i = 0; i < total_lines; ++i) {
+            ofs << "ViewLine " << i << "\n";
+        }
+    }
+    MMF mmf(file, 0, chunk_size);
+    ASSERT_TRUE(mmf.IsValid());
+
+    std::vector<std::string> lines;
+    while (auto line = mmf.ReadLineView(true)) {
+        lines.emplace_back(line.value());
+    }
+    ASSERT_EQ(lines.size(), total_lines);
+    for (int i = 0; i < total_lines; ++i) {
+        ASSERT_EQ(lines[i], "ViewLine " + std::to_string(i));
+    }
+    ASSERT_EQ(mmf.GetLastError(), MMF::Error::EndOfFile);
+}
+
+// Test chunked remapping with empty lines at chunk boundaries
+TEST_F(MMFTest, ChunkedRemappingEmptyLines) {
+    const auto page_size = sysconf(_SC_PAGE_SIZE);
+    int chunk_size = page_size;
+    std::string file = test_dir_ + "/chunked_empty.txt";
+    {
+        std::ofstream ofs(file);
+        ofs << std::string(chunk_size - 1, 'X') << "\n\nY\n";
+    }
+    MMF mmf(file, 0, chunk_size);
+    ASSERT_TRUE(mmf.IsValid());
+
+    auto line1 = mmf.ReadLine(true);
+    ASSERT_TRUE(line1.has_value()) << CreateErrorMessage("Failed to read first line", mmf.GetLastError(), true);
+    ASSERT_EQ(line1->size(), chunk_size - 1);
+
+    auto line2 = mmf.ReadLine(true);
+    ASSERT_TRUE(line2.has_value()) << CreateErrorMessage("Failed to read second line", mmf.GetLastError(), true);
+    ASSERT_EQ(*line2, "");
+
+    auto line3 = mmf.ReadLine(true);
+    ASSERT_TRUE(line3.has_value());
+    ASSERT_EQ(*line3, "Y");
+
+    auto line4 = mmf.ReadLine(true);
+    ASSERT_FALSE(line4.has_value());
+    ASSERT_EQ(mmf.GetLastError(), MMF::Error::EndOfFile);
+}
+
+// Test chunked remapping with empty lines at chunk boundaries
+TEST_F(MMFTest, ChunkedRemappingEmptyLinesViews) {
+  const auto page_size = sysconf(_SC_PAGE_SIZE);
+  int chunk_size = page_size;
+  std::string file = test_dir_ + "/chunked_empty.txt";
+  {
+    std::ofstream ofs(file);
+    ofs << std::string(chunk_size - 1, 'X') << "\n\nY\n";
+  }
+  MMF mmf(file, 0, chunk_size);
+  ASSERT_TRUE(mmf.IsValid());
+
+  auto line1 = mmf.ReadLineView(true);
+  ASSERT_TRUE(line1.has_value()) << CreateErrorMessage("Failed to read first line", mmf.GetLastError(), true);
+  ASSERT_EQ(line1->size(), chunk_size - 1);
+
+  auto line2 = mmf.ReadLineView(true);
+  ASSERT_TRUE(line2.has_value()) << CreateErrorMessage("Failed to read second line", mmf.GetLastError(), true);
+  ASSERT_EQ(*line2, "");
+
+  auto line3 = mmf.ReadLineView(true);
+  ASSERT_TRUE(line3.has_value());
+  ASSERT_EQ(*line3, "Y");
+
+  auto line4 = mmf.ReadLineView(true);
+  ASSERT_FALSE(line4.has_value());
+  ASSERT_EQ(mmf.GetLastError(), MMF::Error::EndOfFile);
+}
