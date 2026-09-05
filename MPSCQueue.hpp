@@ -102,19 +102,14 @@ namespace sp {
       cv_.notify_all(); // Notify consumer that a producer is done
     }
 
-    size_t GetDoneFileCount() const { return done_file_count_.load(); }
-    bool IsDone() const {
-      return done_file_count_.load() >= total_files_;
-    }
-
     void ResetDoneFileCount() {
       done_file_count_.store(0);
-      cv_.notify_all(); // Notify consumer that the count has been reset
+      file_count_cv_.notify_all(); // Notify consumer that the count has been reset
     }
 
     void WaitUntilDoneFileReset() {
       std::unique_lock<std::mutex> lock(mutex_);
-      cv_.wait(lock, [this] { return done_file_count_.load() == 0; });
+      file_count_cv_.wait(lock, [this] { return done_file_count_.load() == 0; });
     }
 
   private:
@@ -122,9 +117,10 @@ namespace sp {
     std::deque<T> cache_;
     mutable std::mutex mutex_;
     std::condition_variable cv_;
+
+    std::condition_variable file_count_cv_;
     std::atomic_size_t done_file_count_;
-    constexpr size_t total_files_ =
-        10000;
+    static constexpr size_t total_files_ = 10000;
   };
 } // namespace sp
 

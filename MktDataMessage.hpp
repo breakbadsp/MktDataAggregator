@@ -16,5 +16,10 @@ namespace sp {
     std::string_view symbol_; // Symbol for the market data
     std::string_view mkt_data_; // Market data
     size_t batch_id_; // Unique identifier for the batch
+
+    std::string_view ToOutputLine() {
+      return symbol_ + ", " + mkt_data_;
+    }
   };
+
 }

@@ -12,7 +12,7 @@
 #include "utils.hpp" // Assume this contains GetMaxMemoryPerThread
 
 using QueueType = sp::MPSCQueue<sp::MktDataMessage>;
-inline std::atomic_size_t thread_count_{0};
+inline std::atomic_size_t thread_count{0};
 
 namespace sp {
 class ChunkedFileReader {
@@ -46,8 +46,7 @@ public:
                 << mmf_.GetLastError() << std::endl;
       return;
     }
-    ++thread_count_;
-
+    ++thread_count;
     std::cout << "Starting thread " << thread_id_ << " for file: " << filename_
               << " with symbol: " << symbol_
               << " and chunk size: " << chunk_size_ << std::endl;
@@ -79,7 +78,7 @@ public:
                   << " after hour change to: " << hour << std::endl;
       }
 
-      queue_.Enqueue( {symbol_, line_opt.value(), hour}); // or whatever your queue method is
+      queue_.Enqueue( {symbol_, line_opt.value(), hour});
     }
   }
 
@@ -97,6 +96,6 @@ private:
   size_t chunk_size_;
   std::atomic<bool> stop_flag_;
   sp::MMF mmf_;
-  thread_local size_t thread_id_ = thread_count_++; // Unique ID for each thread
+  thread_local size_t thread_id_ = thread_count++; // Unique ID for each thread
 };
 } // namespace sp

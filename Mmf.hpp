@@ -4,7 +4,7 @@
 #include <string>
 
 namespace sp {
-  class MMF {
+  class MMF final {
   public:
     enum class OpenMode {
       ReadOnly,
@@ -24,6 +24,46 @@ namespace sp {
       WriteError
     };
 
+  public:
+    explicit MMF(
+      const std::string& filename,
+      OpenMode mode = OpenMode::ReadOnly);
+
+    MMF(const std::string& filename,
+        size_t offset,
+        size_t size,
+        OpenMode mode = OpenMode::ReadOnly);
+
+    ~MMF();
+
+    MMF(MMF&& other) noexcept;
+    MMF& operator=(MMF&& other) noexcept;
+    MMF(const MMF&) = delete;
+    MMF& operator=(const MMF&) = delete;
+
+    bool IsValid() const { return is_valid_; }
+    Error GetLastError() const { return last_error_; }
+    const std::string& GetFilename() const { return filename_; }
+    bool IsEOF() const { return !is_valid_ || current_position_ >= mapped_size_; }
+    std::optional<size_t> GetCurrentPosition() const { return is_valid_ ? std::optional<size_t>(current_position_) : std::nullopt; }
+    std::optional<size_t> GetMappedSize() const { return is_valid_ ? std::optional<size_t>(mapped_size_) : std::nullopt; }
+    std::optional<size_t> GetFileSize() const {
+      return is_valid_ ? std::optional<size_t>(file_size_) : std::nullopt;
+    }
+    std::optional<const void *> GetData() const {
+      return (is_valid_ && mapped_ptr_ != nullptr)
+                 ? std::optional<const void *>(mapped_ptr_)
+                 : std::nullopt;
+    }
+    std::optional<size_t> GetMappedOffset() const {
+      return is_valid_ ? std::optional<size_t>(0) : std::nullopt;
+    }
+
+    std::optional<std::string> ReadLine(bool p_extend_mapping = false);
+    std::optional<std::string_view> ReadLineView(bool p_extend_mapping = false);
+    Error WriteLine(const std::string &line);
+    Error Write(const std::string_view buffer);
+
   private:
     int fd_;
     void* mapped_ptr_;
@@ -39,34 +79,12 @@ namespace sp {
     void Cleanup();
     int GetOpenFlags() const;
     int GetProtFlags() const;
+    Error ExtendMapping(size_t new_size, size_t offset = 0);
     std::optional<std::pair<size_t, size_t>> GetNextLineBounds(bool p_extend_mapping);
     std::pair<size_t, size_t> GetAlignedOffsetAndSize(size_t offset, size_t size) const;
-
-  public:
-    explicit MMF(const std::string& filename, OpenMode mode = OpenMode::ReadOnly);
-    MMF(const std::string& filename, size_t offset, size_t size, OpenMode mode = OpenMode::ReadOnly);
-    ~MMF();
-
-    MMF(MMF&& other) noexcept;
-    MMF& operator=(MMF&& other) noexcept;
-    MMF(const MMF&) = delete;
-    MMF& operator=(const MMF&) = delete;
-
-    bool IsValid() const { return is_valid_; }
-    Error GetLastError() const { return last_error_; }
-    const std::string& GetFilename() const { return filename_; }
-    bool IsEOF() const { return !is_valid_ || current_position_ >= mapped_size_; }
-    std::optional<size_t> GetCurrentPosition() const { return is_valid_ ? std::optional<size_t>(current_position_) : std::nullopt; }
-    std::optional<size_t> GetMappedSize() const { return is_valid_ ? std::optional<size_t>(mapped_size_) : std::nullopt; }
-    std::optional<size_t> GetFileSize() const { return is_valid_ ? std::optional<size_t>(file_size_) : std::nullopt; }
-    std::optional<const void*> GetData() const { return (is_valid_ && mapped_ptr_ != nullptr) ? std::optional<const void*>(mapped_ptr_) : std::nullopt; }
-    std::optional<size_t> GetMappedOffset() const { return is_valid_ ? std::optional<size_t>(0) : std::nullopt; }
-
-    std::optional<std::string> ReadLine(bool p_extend_mapping = false);
-    std::optional<std::string_view> ReadLineView(bool p_extend_mapping = false);
-    Error WriteLine(const std::string& line);
     Error Reset();
     Error SetPosition(size_t position);
+
   };
 }//namespace sp
 
